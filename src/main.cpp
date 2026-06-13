@@ -363,6 +363,7 @@ class DisplayView {
     display.printf("KMH %6.1f", state.speedKmh);
     display.setCursor(4, 28);
     display.printf("HALL %1u", state.hallState);
+    drawDeviceIp(display);
 
     const int horizonY = 70;
     display.drawLine(12, horizonY, width - 12, horizonY, TFT_DARKGREY);
@@ -394,6 +395,24 @@ class DisplayView {
     }
 
     display.endWrite();
+  }
+
+ private:
+  static IPAddress currentDeviceIp() {
+    if (WIFI_AP_MODE) {
+      return WiFi.softAPIP();
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      return WiFi.localIP();
+    }
+    return DEVICE_IP;
+  }
+
+  static void drawDeviceIp(m5gfx::M5GFX& display) {
+    const IPAddress ip = currentDeviceIp();
+    display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    display.setCursor(4, 40);
+    display.printf("IP %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
   }
 };
 
