@@ -9,7 +9,7 @@
 - Target: 自転車の傾きと車輪速度をセンシングし、PC に USB シリアル通信と OSC 通信で送るファームウェア。
 - Hardware: M5Stack AtomS3、内蔵 MPU、49E リニアホールセンサー、車輪側磁石。
 - Framework: PlatformIO / Arduino.
-- Primary environment: `m5stack-atoms3`.
+- Primary environments: `bike1_ap`, `bike2_sta`, `bike3_sta`.
 
 ## Firmware Design
 
@@ -39,7 +39,7 @@
 - Buses/protocols:
   - 内蔵 MPU と LCD は M5Stack ライブラリの AtomS3 対応 API を優先する。
   - PC への有線出力は USB CDC シリアル。
-  - PC への無線出力は Wi-Fi SoftAP + UDP OSC。
+  - PC への無線出力は Wi-Fi SoftAP/STA + UDP OSC。
 - Electrical constraints:
   - ホール入力は `INPUT_PULLUP`、磁石検出時 LOW を初期前提にする。
   - 実機で反応が逆の場合は `HALL_ACTIVE_LEVEL` を `HIGH` に変更する。
@@ -48,20 +48,21 @@
 ## Connectivity
 
 - Network/protocol choices:
-  - 現在はテスト用にローカル Wi-Fi へ STA 接続して OSC を送信する。
-  - `src/main.cpp` の `USE_LOCAL_WIFI` が `true` の場合は STA モード、`false` の場合は AtomS3 SoftAP モードで動作する。
-  - STA モードでは DHCP で AtomS3 自身の IP アドレスを自動取得する。
-  - STA モードの接続完了時は、シリアルに `local_ip` と OSC 送信先を出力する。
-  - STA モードでは `LOCAL_WIFI_SSID`、`LOCAL_WIFI_PASSWORD`、`LOCAL_OSC_HOST` を実環境に合わせて設定する。
-  - STA モードの OSC 送信先: `192.168.1.19:9000`。
-  - AtomS3 SoftAP モードに戻す場合は AtomS3 を SoftAP として起動する。
+  - PlatformIO env で AP 機能あり 1 台、AP 機能なし 2 台を切り替えてビルドする。
+  - `bike1_ap`: AtomS3 を SoftAP として起動し、IP は `192.168.4.1`。
+  - `bike2_sta`: AtomS3 を STA として `katakishi-bike-sensor` へ接続し、固定 IP は `192.168.4.2`。
+  - `bike3_sta`: AtomS3 を STA として `katakishi-bike-sensor` へ接続し、固定 IP は `192.168.4.3`。
   - AP SSID: `katakishi-bike-sensor`。
   - AP password: `bike-sensor`。
-  - ESP32 側 IP: `192.168.4.1`。
-  - SoftAP 時の PC 側 OSC 送信先: `192.168.4.2:9000`。
+  - 受け取り PC の IP: `192.168.4.10`。
+  - OSC 送信先: `192.168.4.10:9000`。
+  - STA モードの接続完了時は、シリアルに `local_ip` と OSC 送信先を出力する。
 - OSC addresses:
-  - `/bike/tilt`: `roll`, `lean_state` を送る。
-  - `/bike/wheel`: `speed_kmh`, `hall_state` を送る。
+  - `bike1_ap`: `/bike1/tilt`, `/bike1/wheel`。
+  - `bike2_sta`: `/bike2/tilt`, `/bike2/wheel`。
+  - `bike3_sta`: `/bike3/tilt`, `/bike3/wheel`。
+  - `tilt`: `roll`, `lean_state` を送る。
+  - `wheel`: `speed_kmh`, `hall_state` を送る。
 - Lean state:
   - `-1`: 左。
   - `0`: 中心。
@@ -81,7 +82,10 @@
 
 ## Build And Test
 
-- Build: `/Users/takamiy/.platformio/penv/bin/pio run`
+- Build all: `/Users/takamiy/.platformio/penv/bin/pio run`
+- Build AP device: `/Users/takamiy/.platformio/penv/bin/pio run -e bike1_ap`
+- Build STA device 2: `/Users/takamiy/.platformio/penv/bin/pio run -e bike2_sta`
+- Build STA device 3: `/Users/takamiy/.platformio/penv/bin/pio run -e bike3_sta`
 - Test: 現時点では自動テストなし。純粋な閾値判定や速度計算を切り出した場合は unit test を追加する。
 - Upload: 明示的な指示があるまで実行しない。
 - Serial monitor: 明示的な指示があるまで実行しない。
@@ -95,15 +99,14 @@
 - 速度計算後は速度計算用の窓内パルス数を 0 に戻す。累積パルス数は別に保持する。
 - USB シリアルと OSC の両方で PC に値を送る。
 - USB シリアル出力は CSV とし、ヘッダー行を起動時に出力する。CSV は `roll,lean_state,speed_kmh,speed_window_pulses,hall_state,hall_active` とする。
-- 現在はローカル Wi-Fi の STA 接続で UDP OSC を送信する。未接続時は UDP 送信をスキップする。
-- AtomS3 SoftAP モードへ戻す場合は `USE_LOCAL_WIFI` を `false` にする。
-- OSC は `/bike/tilt` と `/bike/wheel` を使う。
+- `bike1_ap` は SoftAP を起動し、`bike2_sta` と `bike3_sta` はその AP へ接続する。
+- 全台が PC `192.168.4.10:9000` へ UDP OSC を送信する。未接続時は UDP 送信をスキップする。
+- OSC は env ごとに `/bike1/tilt` と `/bike1/wheel`、`/bike2/tilt` と `/bike2/wheel`、`/bike3/tilt` と `/bike3/wheel` を使う。
 - AtomS3 の画面には、傾き状態と速度をグラフィカルに表示する。
 - 49E の初期判定値は、`INPUT_PULLUP`、検出時 LOW、デバウンス 50ms とする。
 
 ## Open Questions
 
-- PC 側 OSC 送信先を固定 IP のまま運用するか、接続クライアント検出や設定 UI を追加するか。
-- ローカル Wi-Fi テスト用の `LOCAL_WIFI_SSID`、`LOCAL_WIFI_PASSWORD`、`OSC_HOST` は実環境に合わせて設定が必要。
+- PC 側 OSC 送信先 `192.168.4.10` を固定 IP のまま運用するか、接続クライアント検出や設定 UI を追加するか。
 - 49E のデジタル出力が実機で反転する場合は、`HALL_ACTIVE_LEVEL` を調整する。
 - 傾きの左右方向が実機の取り付け向きに対して roll の正負どちらになるか。逆の場合は `leftRight` の符号を反転する。

@@ -12,22 +12,25 @@ namespace {
 
 constexpr uint8_t HALL_PIN = 2;
 constexpr uint32_t SERIAL_BAUD = 115200;
-//ローカルWifi(テスト)
-constexpr bool USE_LOCAL_WIFI = true;
-#ifndef LOCAL_WIFI_SSID
-#define LOCAL_WIFI_SSID ""
+
+#ifndef DEVICE_AP_MODE
+#define DEVICE_AP_MODE 1
 #endif
-#ifndef LOCAL_WIFI_PASSWORD
-#define LOCAL_WIFI_PASSWORD ""
+#ifndef DEVICE_IP_LAST_OCTET
+#define DEVICE_IP_LAST_OCTET 1
 #endif
-const IPAddress LOCAL_OSC_HOST(192, 168, 1, 19);//target PC IPaddr for test Wi-Fi
-//アクセスポイント(本番)
+#ifndef OSC_ADDRESS_PREFIX
+#define OSC_ADDRESS_PREFIX "/bike1"
+#endif
+
+constexpr bool WIFI_AP_MODE = DEVICE_AP_MODE != 0;
 constexpr const char* AP_SSID = "katakishi-bike-sensor";
 constexpr const char* AP_PASSWORD = "bike-sensor";
-const IPAddress AP_IP(192, 168, 4, 1);
-const IPAddress AP_GATEWAY(192, 168, 4, 1);
-const IPAddress AP_SUBNET(255, 255, 255, 0);
-const IPAddress AP_OSC_HOST(192, 168, 4, 2);//target PC IPaddr for AtomS3 AP
+constexpr const char* OSC_PREFIX = OSC_ADDRESS_PREFIX;
+const IPAddress DEVICE_IP(192, 168, 4, DEVICE_IP_LAST_OCTET);
+const IPAddress WIFI_GATEWAY(192, 168, 4, 1);
+const IPAddress WIFI_SUBNET(255, 255, 255, 0);
+const IPAddress OSC_HOST(192, 168, 4, 10);
 constexpr uint16_t OSC_PORT = 9000;
 constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 5000;
 
@@ -42,14 +45,10 @@ constexpr float WHEEL_CIRCUMFERENCE_M = 2.0f;//タイヤ周長2m
 constexpr float MPS_TO_KMH = 3.6f;
 constexpr uint8_t HALL_INPUT_MODE = INPUT_PULLUP;
 constexpr uint8_t HALL_ACTIVE_LEVEL = HIGH;
-constexpr uint32_t HALL_DEBOUNCE_MS = 15;//ノイズ対策
+constexpr uint32_t HALL_DEBOUNCE_MS = 0.1;//ノイズ対策
 
 constexpr float LEAN_CENTER_DEG = 5.0f;
 constexpr float LEAN_SIDE_DEG = 10.0f;
-
-IPAddress oscHost() {
-  return USE_LOCAL_WIFI ? LOCAL_OSC_HOST : AP_OSC_HOST;
-}
 
 struct SensorState {
   float roll = 0.0f;
@@ -208,10 +207,10 @@ class SerialReporter {
 class OscReporter {
  public:
   void begin() {
-    if (USE_LOCAL_WIFI) {
-      startStationMode();
-    } else {
+    if (WIFI_AP_MODE) {
       startAccessPointMode();
+    } else {
+      startStationMode();
     }
     udp_.begin(0);
   }
@@ -229,34 +228,36 @@ class OscReporter {
   void startStationMode() {
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
-    WiFi.begin(LOCAL_WIFI_SSID, LOCAL_WIFI_PASSWORD);
+    WiFi.config(DEVICE_IP, WIFI_GATEWAY, WIFI_SUBNET);
+    WiFi.begin(AP_SSID, AP_PASSWORD);
     lastWifiAttemptMs_ = millis();
   }
 
   void startAccessPointMode() {
     WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
+    WiFi.softAPConfig(DEVICE_IP, WIFI_GATEWAY, WIFI_SUBNET);
     WiFi.softAP(AP_SSID, AP_PASSWORD);
   }
 
   bool ready() {
-    if (USE_LOCAL_WIFI) {
-      if (WiFi.status() == WL_CONNECTED) {
-        printLocalIpOnce();
-        return true;
-      }
-
-      wifiConnectedPrinted_ = false;
-      const uint32_t now = millis();
-      if (now - lastWifiAttemptMs_ >= WIFI_RECONNECT_INTERVAL_MS) {
-        WiFi.disconnect();
-        WiFi.begin(LOCAL_WIFI_SSID, LOCAL_WIFI_PASSWORD);
-        lastWifiAttemptMs_ = now;
-      }
-      return false;
+    if (WIFI_AP_MODE) {
+      return WiFi.softAPgetStationNum() > 0;
     }
 
-    return WiFi.softAPgetStationNum() > 0;
+    if (WiFi.status() == WL_CONNECTED) {
+      printLocalIpOnce();
+      return true;
+    }
+
+    wifiConnectedPrinted_ = false;
+    const uint32_t now = millis();
+    if (now - lastWifiAttemptMs_ >= WIFI_RECONNECT_INTERVAL_MS) {
+      WiFi.disconnect();
+      WiFi.config(DEVICE_IP, WIFI_GATEWAY, WIFI_SUBNET);
+      WiFi.begin(AP_SSID, AP_PASSWORD);
+      lastWifiAttemptMs_ = now;
+    }
+    return false;
   }
 
   void printLocalIpOnce() {
@@ -264,11 +265,12 @@ class OscReporter {
       return;
     }
 
-    Serial.printf("WiFi connected ssid=%s local_ip=%s osc_target=%s:%u\n",
-                  LOCAL_WIFI_SSID,
+    Serial.printf("WiFi connected ssid=%s local_ip=%s osc_target=%s:%u prefix=%s\n",
+                  AP_SSID,
                   WiFi.localIP().toString().c_str(),
-                  oscHost().toString().c_str(),
-                  OSC_PORT);
+                  OSC_HOST.toString().c_str(),
+                  OSC_PORT,
+                  OSC_PREFIX);
     wifiConnectedPrinted_ = true;
   }
 
@@ -303,7 +305,9 @@ class OscReporter {
   void sendTilt(const SensorState& state) {
     uint8_t buffer[64];
     size_t size = 0;
-    appendPaddedString(buffer, size, "/bike/tilt");
+    char address[24];
+    snprintf(address, sizeof(address), "%s/tilt", OSC_PREFIX);
+    appendPaddedString(buffer, size, address);
     appendPaddedString(buffer, size, ",fi");
     appendFloat(buffer, size, state.roll);
     appendInt32(buffer, size, state.leanState);
@@ -313,7 +317,9 @@ class OscReporter {
   void sendWheel(const SensorState& state) {
     uint8_t buffer[64];
     size_t size = 0;
-    appendPaddedString(buffer, size, "/bike/wheel");
+    char address[24];
+    snprintf(address, sizeof(address), "%s/wheel", OSC_PREFIX);
+    appendPaddedString(buffer, size, address);
     appendPaddedString(buffer, size, ",fi");
     appendFloat(buffer, size, state.speedKmh);
     appendInt32(buffer, size, state.hallState);
@@ -321,7 +327,7 @@ class OscReporter {
   }
 
   void send(const uint8_t* buffer, size_t size) {
-    udp_.beginPacket(oscHost(), OSC_PORT);
+    udp_.beginPacket(OSC_HOST, OSC_PORT);
     udp_.write(buffer, size);
     udp_.endPacket();
   }
@@ -382,8 +388,8 @@ class DisplayView {
     display.drawRect(barX, barY, barW, barH, TFT_DARKGREY);
     display.fillRect(barX + 1, barY + 1, max(0, speedFill - 2), barH - 2, TFT_CYAN);
 
-    if ((USE_LOCAL_WIFI && WiFi.status() == WL_CONNECTED) ||
-        (!USE_LOCAL_WIFI && WiFi.softAPgetStationNum() > 0)) {
+    if ((!WIFI_AP_MODE && WiFi.status() == WL_CONNECTED) ||
+        (WIFI_AP_MODE && WiFi.softAPgetStationNum() > 0)) {
       display.fillCircle(width - 7, 7, 3, TFT_BLUE);
     }
 
@@ -426,18 +432,21 @@ void setup() {
   oscReporter.begin();
   displayView.begin();
 
-  if (USE_LOCAL_WIFI) {
-    Serial.printf("WiFi STA DHCP ssid=%s osc_target=%s:%u\n",
-                  LOCAL_WIFI_SSID,
-                  oscHost().toString().c_str(),
-                  OSC_PORT);
-  } else {
-    Serial.printf("SoftAP SSID=%s password=%s ip=%s osc=%s:%u\n",
+  if (WIFI_AP_MODE) {
+    Serial.printf("SoftAP SSID=%s password=%s ip=%s osc=%s:%u prefix=%s\n",
                   AP_SSID,
                   AP_PASSWORD,
                   WiFi.softAPIP().toString().c_str(),
-                  oscHost().toString().c_str(),
-                  OSC_PORT);
+                  OSC_HOST.toString().c_str(),
+                  OSC_PORT,
+                  OSC_PREFIX);
+  } else {
+    Serial.printf("WiFi STA static_ip=%s ssid=%s osc_target=%s:%u prefix=%s\n",
+                  DEVICE_IP.toString().c_str(),
+                  AP_SSID,
+                  OSC_HOST.toString().c_str(),
+                  OSC_PORT,
+                  OSC_PREFIX);
   }
 }
 
