@@ -45,7 +45,7 @@ constexpr float WHEEL_CIRCUMFERENCE_M = 2.0f;//タイヤ周長2m
 constexpr float MPS_TO_KMH = 3.6f;
 constexpr uint8_t HALL_INPUT_MODE = INPUT_PULLUP;
 constexpr uint8_t HALL_ACTIVE_LEVEL = HIGH;
-constexpr uint32_t HALL_DEBOUNCE_MS = 0.1;//ノイズ対策
+constexpr uint32_t HALL_DEBOUNCE_MS = 0.1;//ノイズ対策(ここを増やすと加速時に速度取得ができなくなる可能性あり)
 
 constexpr float LEAN_CENTER_DEG = 5.0f;
 constexpr float LEAN_SIDE_DEG = 10.0f;
